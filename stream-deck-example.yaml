@@ -1,0 +1,45 @@
+# Real-device example config for the Waveshare ESP32-S3-Zero + Stream Deck.
+# See docs/hardware.md before wiring anything up, and secrets.yaml.example
+# for what secrets.yaml needs. This is still Milestone 1: it logs key
+# presses (see the UART0 console) but doesn't expose any entities to Home
+# Assistant yet, and doesn't write key images - that's M2/M3.
+substitutions:
+  name: stream-deck
+
+esphome:
+  name: ${name}
+  friendly_name: Stream Deck
+
+esp32:
+  # Waveshare ESP32-S3-Zero: ESP32-S3FH4R2 - 4MB flash, 2MB octal PSRAM.
+  variant: esp32s3
+  flash_size: 4MB
+  framework:
+    type: esp-idf # required - USB Host mode isn't available under Arduino
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# USB-C is dedicated to USB-OTG host mode for the Stream Deck at runtime, so
+# logs need to go out UART0 (GPIO43 TX / GPIO44 RX) instead - wire an
+# external USB-to-serial adapter there. See docs/hardware.md.
+logger:
+  hardware_uart: UART0
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  platform: esphome
+
+external_components:
+  - source: github://thatguy-za/esp32-stream-deck@main
+    components: [stream_deck]
+
+stream_deck:
