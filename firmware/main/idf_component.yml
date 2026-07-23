@@ -1,0 +1,6 @@
+dependencies:
+  idf: ">=5.1"
+  # HID Host driver on top of the USB Host Library. API confirmed against
+  # espressif/esp-usb's usb/hid_host.h and the official
+  # examples/peripherals/usb/host/hid example in espressif/esp-idf.
+  usb_host_hid: "^1.0.1"
