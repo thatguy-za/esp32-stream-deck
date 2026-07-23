@@ -7,12 +7,29 @@ from esphome.core import CORE
 DEPENDENCIES = ["esp32"]
 CODEOWNERS = ["@thatguy-za"]
 
+CONF_MODEL = "model"
+
 stream_deck_ns = cg.esphome_ns.namespace("stream_deck")
 StreamDeckComponent = stream_deck_ns.class_("StreamDeckComponent", cg.Component)
+StreamDeckModel = stream_deck_ns.enum("StreamDeckModel", is_class=True)
+
+# One entry per protocol family (not per PID - e.g. "Mini" and "Mini Mk2" are
+# the same protocol/key layout, just different PIDs; likewise MK.2 and
+# Original V2 - see docs/protocol.md). Which one actually connects is still
+# auto-detected by PID at runtime; this tells the firmware what to *expect*
+# (key count/layout, and eventually image format in M2) since that has to be
+# known at compile time to generate the right number of key entities later.
+MODELS = {
+    "mini": StreamDeckModel.MODEL_MINI,
+    "original": StreamDeckModel.MODEL_ORIGINAL,
+    "original_v2": StreamDeckModel.MODEL_ORIGINAL_V2,
+    "mk2": StreamDeckModel.MODEL_ORIGINAL_V2,  # alias - MK.2 is the Original V2 protocol
+}
 
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(StreamDeckComponent),
+        cv.Required(CONF_MODEL): cv.enum(MODELS, lower=True),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -43,3 +60,4 @@ async def to_code(config):
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    cg.add(var.set_model(config[CONF_MODEL]))

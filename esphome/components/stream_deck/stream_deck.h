@@ -11,8 +11,17 @@
 namespace esphome {
 namespace stream_deck {
 
-// One row per supported device family. Key-press report layout is "header_len
-// bytes, then one boolean byte per key" for all three families (just with
+// Selectable in YAML via `stream_deck: model:`. One entry per protocol
+// family, not per PID - "Mini"/"Mini Mk2" share a protocol, as do "Original
+// V2"/"MK.2" (and its Scissor/Module variants) - see docs/protocol.md.
+enum class StreamDeckModel {
+  MODEL_MINI,
+  MODEL_ORIGINAL,
+  MODEL_ORIGINAL_V2,
+};
+
+// One row per supported PID. Key-press report layout is "header_len bytes,
+// then one boolean byte per key" for all three families (just with
 // different header_len/key_count) - see docs/protocol.md. Image upload isn't
 // in this table yet since M1 doesn't write images; M2 will need a richer
 // per-family profile (image format, page header layout) built on this same
@@ -20,6 +29,7 @@ namespace stream_deck {
 struct StreamDeckProfile {
   uint16_t pid;
   const char *name;
+  StreamDeckModel model;
   uint8_t key_count;
   uint8_t key_report_header_len;
 };
@@ -30,6 +40,8 @@ class StreamDeckComponent : public Component {
   void loop() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::HARDWARE; }
+
+  void set_model(StreamDeckModel model) { this->configured_model_ = model; }
 
  protected:
   enum AppEventGroup {
@@ -60,9 +72,11 @@ class StreamDeckComponent : public Component {
   void handle_device_event_(hid_host_device_handle_t hid_device_handle, hid_host_driver_event_t event);
   static void log_key_report_(const uint8_t *data, size_t length);
   static const StreamDeckProfile *find_profile_(uint16_t vid, uint16_t pid);
+  static const char *model_to_string_(StreamDeckModel model);
 
   QueueHandle_t event_queue_{nullptr};
   TaskHandle_t usb_task_handle_{nullptr};
+  StreamDeckModel configured_model_{StreamDeckModel::MODEL_MINI};
 };
 
 // Set once a recognized device connects, so the (static) interface callback -

@@ -19,3 +19,4 @@ external_components:
     components: [stream_deck]
 
 stream_deck:
+  model: mini # one of: mini, original, original_v2 (alias: mk2)

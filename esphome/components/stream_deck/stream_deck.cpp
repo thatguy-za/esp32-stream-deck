@@ -23,17 +23,30 @@ static const char *const TAG = "stream_deck";
 #define STREAMDECK_VID 0x0FD9
 
 static const StreamDeckProfile kStreamdeckProfiles[] = {
-    {0x0063, "Stream Deck Mini", 6, 1},
-    {0x0090, "Stream Deck Mini Mk2", 6, 1},
-    {0x0060, "Stream Deck Original", 15, 1},
-    {0x006D, "Stream Deck Original V2", 15, 4},
-    {0x0080, "Stream Deck MK.2", 15, 4},
-    {0x00A5, "Stream Deck MK.2 Scissor", 15, 4},
-    {0x00B9, "Stream Deck MK.2 Module", 15, 4},
+    {0x0063, "Stream Deck Mini", StreamDeckModel::MODEL_MINI, 6, 1},
+    {0x0090, "Stream Deck Mini Mk2", StreamDeckModel::MODEL_MINI, 6, 1},
+    {0x0060, "Stream Deck Original", StreamDeckModel::MODEL_ORIGINAL, 15, 1},
+    {0x006D, "Stream Deck Original V2", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4},
+    {0x0080, "Stream Deck MK.2", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4},
+    {0x00A5, "Stream Deck MK.2 Scissor", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4},
+    {0x00B9, "Stream Deck MK.2 Module", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4},
 };
 #define STREAMDECK_PROFILE_COUNT (sizeof(kStreamdeckProfiles) / sizeof(kStreamdeckProfiles[0]))
 
 const StreamDeckProfile *g_active_profile = nullptr;
+
+const char *StreamDeckComponent::model_to_string_(StreamDeckModel model) {
+  switch (model) {
+    case StreamDeckModel::MODEL_MINI:
+      return "mini";
+    case StreamDeckModel::MODEL_ORIGINAL:
+      return "original";
+    case StreamDeckModel::MODEL_ORIGINAL_V2:
+      return "original_v2 (or mk2)";
+    default:
+      return "unknown";
+  }
+}
 
 const StreamDeckProfile *StreamDeckComponent::find_profile_(uint16_t vid, uint16_t pid) {
   if (vid != STREAMDECK_VID) {
@@ -152,6 +165,12 @@ void StreamDeckComponent::handle_device_event_(hid_host_device_handle_t hid_devi
   const StreamDeckProfile *profile = find_profile_(dev_info.VID, dev_info.PID);
   if (profile) {
     ESP_LOGI(TAG, "  -> matches %s (PID 0x%04X, %d keys)", profile->name, profile->pid, profile->key_count);
+    if (profile->model != this->configured_model_) {
+      ESP_LOGW(TAG,
+               "  -> but this build is configured for '%s' (stream_deck: model:) - key layout "
+               "will be wrong until the YAML is updated to match the device actually connected",
+               model_to_string_(this->configured_model_));
+    }
     g_active_profile = profile;
   } else {
     ESP_LOGW(TAG,
@@ -251,6 +270,7 @@ void StreamDeckComponent::loop() {
 
 void StreamDeckComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "Stream Deck:");
+  ESP_LOGCONFIG(TAG, "  Configured model: %s", model_to_string_(this->configured_model_));
   ESP_LOGCONFIG(TAG, "  USB Host mode starts %u s after boot", (unsigned) (USB_HOST_START_DELAY_MS / 1000));
 }
 

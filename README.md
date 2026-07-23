@@ -23,6 +23,7 @@ esp32:
     type: esp-idf  # required - USB Host mode isn't available under Arduino
 
 stream_deck:
+  model: mini # one of: mini, original, original_v2 (alias: mk2) - see docs/protocol.md
 ```
 
 See [test-stream-deck.yaml](test-stream-deck.yaml) for a minimal compile-only
