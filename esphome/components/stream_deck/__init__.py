@@ -5,7 +5,7 @@ from esphome.const import CONF_ID
 from esphome.core import CORE
 
 DEPENDENCIES = ["esp32"]
-CODEOWNERS = ["@tristamr"]
+CODEOWNERS = ["@thatguy-za"]
 
 stream_deck_ns = cg.esphome_ns.namespace("stream_deck")
 StreamDeckComponent = stream_deck_ns.class_("StreamDeckComponent", cg.Component)

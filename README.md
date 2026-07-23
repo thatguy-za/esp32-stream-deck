@@ -15,7 +15,7 @@ a device (keyboard, CDC-ACM, etc.), the ESP32-S3 enumerates the Stream Deck
 
 ```yaml
 external_components:
-  - source: github://tristamr/esp32-stream-deck@main
+  - source: github://thatguy-za/esp32-stream-deck@main
     components: [stream_deck]
 
 esp32:
