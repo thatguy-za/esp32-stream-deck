@@ -15,7 +15,7 @@ GPIO19/20 pins, but only one at a time:
   must act as a USB *host* to the Stream Deck.
 
 Once firmware switches that PHY over to host mode, the single USB-C port
-stops being a serial console. That has three consequences:
+stops being a serial console. That has four consequences:
 
 1. **Reflashing** requires putting the board back in bootloader mode (hold
    BOOT, tap RESET, release BOOT) with the Stream Deck unplugged, so
@@ -25,6 +25,15 @@ stops being a serial console. That has three consequences:
 3. **Powering the board** can't come through the USB-C port at the same time
    it's acting as host (a host has to *supply* 5V VBUS to the downstream
    device, not receive it) — see the power plan below.
+4. **Right after flashing, the board is still tethered to your computer on
+   that same port** — and the computer is still actively acting as *its own*
+   USB host on that link. If firmware switched to host mode immediately at
+   boot, that's an instant conflict (two hosts contending for the same
+   bus/VBUS), and it reliably brownout-reboots the board in a loop. The
+   `stream_deck` component defers starting USB Host mode for 8 seconds after
+   boot for exactly this reason — **unplug the board from your computer and
+   move it to the 5V-pad power setup below within that window**, every time
+   you reflash it, or it'll boot-loop.
 
 ## Debug console: UART0 on GPIO43/44
 
@@ -78,6 +87,9 @@ S3-Zero's port while the ESP32-S3 acts as host.
 - [ ] Flash the ESPHome build (`esphome run <your-config>.yaml`) over the
       native USB-C port (device mode, normal flashing) — do this **before**
       the Stream Deck is connected and host mode takes over the port
+- [ ] Within 8 seconds of it resetting after flashing, **unplug the board
+      from your computer** — leaving it tethered while USB Host mode starts
+      will boot-loop it (see above)
 - [ ] Power the board from the 5V pad, connect the Stream Deck via the OTG
       adapter cable, watch the UART0 console for enumeration + descriptor
       dump + key-press logs

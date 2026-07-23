@@ -48,6 +48,15 @@ class StreamDeckComponent : public Component {
   static void hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
                                            hid_host_interface_event_t event, void *arg);
 
+  // Actually switches the shared USB-OTG PHY into host mode. Deferred a few
+  // seconds after boot (see setup()) rather than done immediately, so a
+  // board still tethered to a PC over the same USB-C port (e.g. right after
+  // flashing) has a window to be unplugged first - starting USB Host mode
+  // while a PC is still actively driving that same port as its own USB host
+  // contends for the bus/VBUS and reliably brownout-reboots the board in a
+  // loop. See docs/hardware.md.
+  void start_usb_host_();
+
   void handle_device_event_(hid_host_device_handle_t hid_device_handle, hid_host_driver_event_t event);
   static void log_key_report_(const uint8_t *data, size_t length);
   static const StreamDeckProfile *find_profile_(uint16_t vid, uint16_t pid);

@@ -185,11 +185,31 @@ void StreamDeckComponent::hid_host_device_callback(hid_host_device_handle_t hid_
   xQueueSend(self->event_queue_, &evt, 0);
 }
 
+namespace {
+// Grace period between boot and actually switching the USB-OTG PHY to host
+// mode. A board freshly flashed over its native USB-C port is very likely
+// still tethered to the flashing computer on that same port - and that
+// computer is still actively driving the bus as *its* USB host. Slamming
+// into host mode immediately contends with that and reliably brownout-
+// reboots the board in a loop (see docs/hardware.md). This window gives
+// time to physically unplug from the PC (and move to the documented 5V-pad
+// power setup) before that happens.
+constexpr uint32_t USB_HOST_START_DELAY_MS = 8000;
+}  // namespace
+
 void StreamDeckComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up Stream Deck USB host...");
-
   this->event_queue_ = xQueueCreate(10, sizeof(AppEvent));
 
+  ESP_LOGW(TAG,
+           "Starting USB Host mode in %u seconds - if this board is still plugged into a "
+           "computer over its native USB-C port, unplug it now (see docs/hardware.md). "
+           "Leaving it connected will brownout-reboot the board.",
+           (unsigned) (USB_HOST_START_DELAY_MS / 1000));
+  this->set_timeout("start_usb_host", USB_HOST_START_DELAY_MS, [this]() { this->start_usb_host_(); });
+}
+
+void StreamDeckComponent::start_usb_host_() {
   bool task_created = xTaskCreatePinnedToCore(usb_lib_task, "usb_events", 4096, xTaskGetCurrentTaskHandle(), 2,
                                                &this->usb_task_handle_, 0);
   if (!task_created) {
@@ -214,7 +234,7 @@ void StreamDeckComponent::setup() {
     return;
   }
 
-  ESP_LOGI(TAG, "Waiting for the Stream Deck to be connected...");
+  ESP_LOGI(TAG, "USB Host mode active. Waiting for the Stream Deck to be connected...");
 }
 
 void StreamDeckComponent::loop() {
@@ -229,7 +249,10 @@ void StreamDeckComponent::loop() {
   }
 }
 
-void StreamDeckComponent::dump_config() { ESP_LOGCONFIG(TAG, "Stream Deck:"); }
+void StreamDeckComponent::dump_config() {
+  ESP_LOGCONFIG(TAG, "Stream Deck:");
+  ESP_LOGCONFIG(TAG, "  USB Host mode starts %u s after boot", (unsigned) (USB_HOST_START_DELAY_MS / 1000));
+}
 
 }  // namespace stream_deck
 }  // namespace esphome
