@@ -35,8 +35,9 @@ The S3-Zero breaks out UART0 separately from the USB pins:
 
 Wire these to an external USB-to-serial adapter (any 3.3V FTDI/CP2102-style
 board — TX→RX, RX→TX, GND→GND) to get a live console throughout, independent
-of whatever the USB-C port is doing. `sdkconfig.defaults` in `firmware/`
-routes the IDF console/log output here instead of the USB-Serial-JTAG driver.
+of whatever the USB-C port is doing. Set `logger: hardware_uart: UART0` in
+the ESPHome YAML to route log output here instead of USB-Serial-JTAG (see
+[test-stream-deck.yaml](../test-stream-deck.yaml)).
 
 ## Power: the 5V pad, not the USB-C port
 
@@ -74,8 +75,9 @@ S3-Zero's port while the ESP32-S3 acts as host.
 - [ ] Solder external supply leads to the 5V pad
 - [ ] Wire UART0 (GPIO43 TX, GPIO44 RX, GND) to a USB-serial adapter, confirm
       console output before doing anything USB-host related
-- [ ] Flash `firmware/` over the native USB-C port (device mode, normal
-      flashing) — do this **before** enabling host mode in firmware
+- [ ] Flash the ESPHome build (`esphome run <your-config>.yaml`) over the
+      native USB-C port (device mode, normal flashing) — do this **before**
+      the Stream Deck is connected and host mode takes over the port
 - [ ] Power the board from the 5V pad, connect the Stream Deck via the OTG
       adapter cable, watch the UART0 console for enumeration + descriptor
       dump + key-press logs

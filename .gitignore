@@ -1,8 +1,11 @@
-# ESP-IDF build artifacts
-firmware/build/
-firmware/managed_components/
-firmware/sdkconfig
-firmware/sdkconfig.old
+# ESPHome build cache (created by `esphome compile`/`esphome run`)
+.esphome/
+secrets.yaml
+
+# Python venv used to run ESPHome locally
+.venv/
+__pycache__/
+*.pyc
 
 # macOS
 .DS_Store
