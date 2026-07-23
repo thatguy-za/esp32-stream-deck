@@ -1,7 +1,7 @@
 /*
- * Milestone 1: enumerate a Stream Deck Mini as a USB host and log key
- * presses. No image writing yet (that's M2) — see docs/protocol.md and
- * docs/hardware.md.
+ * Milestone 1: enumerate a Stream Deck (Mini, Original, or Original V2/MK.2)
+ * as a USB host and log key presses. No image writing yet (that's M2) — see
+ * docs/protocol.md and docs/hardware.md.
  *
  * Driver setup/event pattern follows espressif/esp-idf's own
  * examples/peripherals/usb/host/hid example, since the usb_host_hid
@@ -9,6 +9,7 @@
  * queued driver/interface events) isn't obvious to get right from the
  * header alone.
  */
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -24,12 +25,48 @@
 
 static const char *TAG = "streamdeck";
 
-/* Elgato Stream Deck Mini — see docs/protocol.md for sources. */
-#define STREAMDECK_VID          0x0FD9
-#define STREAMDECK_PID_MINI     0x0063
-#define STREAMDECK_PID_MINI_MK2 0x0090
+#define STREAMDECK_VID 0x0FD9
 
-#define STREAMDECK_KEY_COUNT    6
+/* One row per supported device family. Key-press report layout is
+ * "header_len bytes, then one boolean byte per key" for all three families
+ * (just with different header_len/key_count) — see docs/protocol.md. Image
+ * upload isn't in this table yet since M1 doesn't write images; M2 will need
+ * a richer per-family profile (image format, page header layout) built on
+ * top of this same PID lookup. */
+typedef struct {
+    uint16_t pid;
+    const char *name;
+    uint8_t key_count;
+    uint8_t key_report_header_len;
+} streamdeck_profile_t;
+
+static const streamdeck_profile_t kStreamdeckProfiles[] = {
+    {0x0063, "Stream Deck Mini", 6, 1},
+    {0x0090, "Stream Deck Mini Mk2", 6, 1},
+    {0x0060, "Stream Deck Original", 15, 1},
+    {0x006D, "Stream Deck Original V2", 15, 4},
+    {0x0080, "Stream Deck MK.2", 15, 4},
+    {0x00A5, "Stream Deck MK.2 Scissor", 15, 4},
+    {0x00B9, "Stream Deck MK.2 Module", 15, 4},
+};
+#define STREAMDECK_PROFILE_COUNT (sizeof(kStreamdeckProfiles) / sizeof(kStreamdeckProfiles[0]))
+
+static const streamdeck_profile_t *streamdeck_find_profile(uint16_t vid, uint16_t pid)
+{
+    if (vid != STREAMDECK_VID) {
+        return NULL;
+    }
+    for (size_t i = 0; i < STREAMDECK_PROFILE_COUNT; i++) {
+        if (kStreamdeckProfiles[i].pid == pid) {
+            return &kStreamdeckProfiles[i];
+        }
+    }
+    return NULL;
+}
+
+/* Set once a recognized device connects, so the interface callback (which
+ * only gets a device handle, not the VID/PID) knows how to decode reports. */
+static const streamdeck_profile_t *s_active_profile = NULL;
 
 typedef enum {
     APP_EVENT = 0,
@@ -75,10 +112,14 @@ static void usb_lib_task(void *arg)
 
 static void log_key_report(const uint8_t *data, size_t length)
 {
-    if (length < 1 + STREAMDECK_KEY_COUNT) {
-        /* Doesn't match the 7-byte layout assumed in docs/protocol.md —
-         * dump it raw so we can update the doc from what real hardware
-         * actually sends. */
+    const streamdeck_profile_t *profile = s_active_profile;
+    size_t header_len = profile ? profile->key_report_header_len : 1;
+    size_t key_count = profile ? profile->key_count : 0;
+
+    if (!profile || length < header_len + key_count) {
+        /* Either no profile matched yet, or this doesn't match the layout
+         * docs/protocol.md assumes for the matched profile — dump it raw so
+         * the doc can be corrected from what real hardware actually sends. */
         char hex[3 * 64 + 1] = {0};
         for (size_t i = 0; i < length && i < 64; i++) {
             snprintf(&hex[i * 3], 4, "%02X ", data[i]);
@@ -87,8 +128,11 @@ static void log_key_report(const uint8_t *data, size_t length)
         return;
     }
 
-    ESP_LOGI(TAG, "status=0x%02X keys=[%d %d %d %d %d %d]",
-             data[0], data[1], data[2], data[3], data[4], data[5], data[6]);
+    char keys[5 * 16 + 1] = {0};
+    for (size_t i = 0; i < key_count && i < 16; i++) {
+        snprintf(&keys[i * 5], 5, "%3u ", (unsigned)data[header_len + i]);
+    }
+    ESP_LOGI(TAG, "%s key states: [ %s]", profile->name, keys);
 }
 
 /* Handles reports/events for an already-open HID interface. */
@@ -110,6 +154,7 @@ static void hid_host_interface_callback(hid_host_device_handle_t hid_device_hand
 
     case HID_HOST_INTERFACE_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "Stream Deck disconnected (iface %d)", dev_params.iface_num);
+        s_active_profile = NULL;
         ESP_ERROR_CHECK(hid_host_device_close(hid_device_handle));
         break;
 
@@ -124,7 +169,8 @@ static void hid_host_interface_callback(hid_host_device_handle_t hid_device_hand
 }
 
 /* Handles driver-level events (device connected) — opens the interface and
- * logs identification so we can confirm this is really a Stream Deck Mini. */
+ * logs identification so we can confirm this is really a Stream Deck and
+ * which family it belongs to. */
 static void hid_host_device_event(hid_host_device_handle_t hid_device_handle,
                                    const hid_host_driver_event_t event,
                                    void *arg)
@@ -146,14 +192,17 @@ static void hid_host_device_event(hid_host_device_handle_t hid_device_handle,
     ESP_LOGI(TAG, "  Product:      %ls", dev_info.iProduct);
     ESP_LOGI(TAG, "  Serial:       %ls", dev_info.iSerialNumber);
 
-    if (dev_info.VID == STREAMDECK_VID &&
-        (dev_info.PID == STREAMDECK_PID_MINI || dev_info.PID == STREAMDECK_PID_MINI_MK2)) {
-        ESP_LOGI(TAG, "  -> matches Stream Deck Mini (PID 0x%04X)", dev_info.PID);
+    const streamdeck_profile_t *profile = streamdeck_find_profile(dev_info.VID, dev_info.PID);
+    if (profile) {
+        ESP_LOGI(TAG, "  -> matches %s (PID 0x%04X, %d keys)", profile->name, profile->pid,
+                 profile->key_count);
+        s_active_profile = profile;
     } else {
-        ESP_LOGW(TAG, "  -> VID/PID does not match the expected Stream Deck Mini "
-                       "(0x%04X/0x%04X or 0x%04X/0x%04X) — update docs/protocol.md "
-                       "if this unit is a different revision",
-                 STREAMDECK_VID, STREAMDECK_PID_MINI, STREAMDECK_VID, STREAMDECK_PID_MINI_MK2);
+        ESP_LOGW(TAG, "  -> VID/PID 0x%04X/0x%04X doesn't match any known Stream Deck "
+                       "profile — add it to kStreamdeckProfiles / docs/protocol.md if this "
+                       "is a real Stream Deck of a different revision",
+                 dev_info.VID, dev_info.PID);
+        s_active_profile = NULL;
     }
 
     const hid_host_device_config_t dev_config = {
