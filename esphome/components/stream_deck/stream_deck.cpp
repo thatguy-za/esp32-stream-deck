@@ -181,11 +181,24 @@ void StreamDeckComponent::handle_device_event_(hid_host_device_handle_t hid_devi
     g_active_profile = nullptr;
   }
 
+  // Diagnostic: dump every interface/alternate-setting/endpoint before
+  // attempting to claim anything, so we have the full picture even if the
+  // claim below fails (see dump_full_descriptor_'s doc comment).
+  this->dump_full_descriptor_(dev_params.addr);
+
   const hid_host_device_config_t dev_config = {
       .callback = hid_host_interface_callback,
       .callback_arg = nullptr,
   };
-  ESP_ERROR_CHECK(hid_host_device_open(hid_device_handle, &dev_config));
+  esp_err_t err = hid_host_device_open(hid_device_handle, &dev_config);
+  if (err != ESP_OK) {
+    // Not fatal: some devices declare an endpoint too large for this SoC's
+    // USB Host FIFO (see docs/protocol.md) - crashing here would abort()
+    // and reboot every time the device reconnects, turning a single
+    // incompatible endpoint into another boot loop.
+    ESP_LOGE(TAG, "hid_host_device_open failed: %s - key presses unavailable for this device", esp_err_to_name(err));
+    g_active_profile = nullptr;
+  }
 }
 
 // Runs in the USB Host Library's context - keep it short, just forward to
@@ -253,10 +266,61 @@ void StreamDeckComponent::start_usb_host_() {
     return;
   }
 
+  // Second, independent client purely for read-only descriptor dumps (see
+  // dump_full_descriptor_). The USB Host Library supports multiple
+  // concurrent clients on the same device, so this doesn't interfere with
+  // hid_host's own client/interface claim.
+  const usb_host_client_config_t diag_client_config = {
+      .is_synchronous = false,
+      .max_num_event_msg = 5,
+      .async =
+          {
+              .client_event_callback = diag_client_event_callback,
+              .callback_arg = this,
+          },
+  };
+  err = usb_host_client_register(&diag_client_config, &this->diag_client_hdl_);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "Diagnostic USB client registration failed: %s (descriptor dumps unavailable)",
+             esp_err_to_name(err));
+  }
+
   ESP_LOGI(TAG, "USB Host mode active. Waiting for the Stream Deck to be connected...");
 }
 
+void StreamDeckComponent::diag_client_event_callback(const usb_host_client_event_msg_t *event_msg, void *arg) {
+  // Everything this client does is driven synchronously from
+  // dump_full_descriptor_() instead of reacting to events here.
+}
+
+void StreamDeckComponent::dump_full_descriptor_(uint8_t dev_addr) {
+  if (this->diag_client_hdl_ == nullptr) {
+    return;
+  }
+
+  usb_device_handle_t dev_hdl;
+  esp_err_t err = usb_host_device_open(this->diag_client_hdl_, dev_addr, &dev_hdl);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "Diagnostic device open failed: %s", esp_err_to_name(err));
+    return;
+  }
+
+  const usb_config_desc_t *config_desc;
+  if (usb_host_get_active_config_descriptor(dev_hdl, &config_desc) == ESP_OK) {
+    ESP_LOGI(TAG, "Full descriptor dump (looking for a usable alternate setting/endpoint):");
+    usb_print_config_descriptor(config_desc, nullptr);
+  } else {
+    ESP_LOGW(TAG, "Could not read active config descriptor for diagnostic dump");
+  }
+
+  usb_host_device_close(this->diag_client_hdl_, dev_hdl);
+}
+
 void StreamDeckComponent::loop() {
+  if (this->diag_client_hdl_ != nullptr) {
+    usb_host_client_handle_events(this->diag_client_hdl_, 0);
+  }
+
   if (this->event_queue_ == nullptr) {
     return;
   }

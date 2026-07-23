@@ -6,6 +6,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "usb/hid_host.h"
+#include "usb/usb_helpers.h"
 #include "usb/usb_host.h"
 
 namespace esphome {
@@ -74,9 +75,21 @@ class StreamDeckComponent : public Component {
   static const StreamDeckProfile *find_profile_(uint16_t vid, uint16_t pid);
   static const char *model_to_string_(StreamDeckModel model);
 
+  // Diagnostic only: dumps every interface/alternate-setting/endpoint on the
+  // device to the log via a second, read-only USB Host client running
+  // alongside hid_host's own. hid_host_device_open() only ever tries the
+  // *first* IN endpoint of the interface it matched (see
+  // hid_host_interface_claim_and_prepare_transfer() in espressif/esp-usb) -
+  // if that's the one exceeding the ESP32-S3's ~408 byte pipe limit, this
+  // tells us whether a different alternate setting exposes a smaller one we
+  // could claim instead. See docs/protocol.md.
+  void dump_full_descriptor_(uint8_t dev_addr);
+  static void diag_client_event_callback(const usb_host_client_event_msg_t *event_msg, void *arg);
+
   QueueHandle_t event_queue_{nullptr};
   TaskHandle_t usb_task_handle_{nullptr};
   StreamDeckModel configured_model_{StreamDeckModel::MODEL_MINI};
+  usb_host_client_handle_t diag_client_hdl_{nullptr};
 };
 
 // Set once a recognized device connects, so the (static) interface callback -
