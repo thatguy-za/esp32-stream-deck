@@ -1,5 +1,6 @@
-# Minimal local compile-only test for the stream_deck external component -
-# not a real device config (no wifi/api). Run with:
+# Local compile-only test for the stream_deck external component - runs
+# against the local checkout (not GitHub) so changes are tested before
+# being pushed. Uses the placeholder secrets.yaml already present locally.
 #   esphome compile test-stream-deck.yaml
 esphome:
   name: stream-deck-test
@@ -12,6 +13,21 @@ esp32:
 logger:
   hardware_uart: UART0
 
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  homeassistant_states: true
+  homeassistant_services: true
+
+font:
+  - file: "gfonts://Roboto"
+    id: stream_deck_font
+    size: 14
+
 external_components:
   - source:
       type: local
@@ -20,3 +36,11 @@ external_components:
 
 stream_deck:
   model: mini # one of: mini, original, original_v2 (alias: mk2)
+  font_id: stream_deck_font
+  keys:
+    - key_index: 0
+      entity_id: light.kitchen
+    - key_index: 1
+      entity_id: switch.fan
+      icon: fan
+      on_color: 0x00AAFF

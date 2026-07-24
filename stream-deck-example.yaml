@@ -1,8 +1,8 @@
 # Real-device example config for the Waveshare ESP32-S3-Zero + Stream Deck.
 # See docs/hardware.md before wiring anything up, and secrets.yaml.example
-# for what secrets.yaml needs. This is still Milestone 1: it logs key
-# presses (see the UART0 console) but doesn't expose any entities to Home
-# Assistant yet, and doesn't write key images - that's M2/M3.
+# for what secrets.yaml needs. Binds two keys to Home Assistant entities -
+# swap entity_id/key_index for your own. Image writes (icons on the keys)
+# only work for the Mini/Mini Mk2 family so far - see docs/protocol.md.
 substitutions:
   name: stream-deck
 
@@ -34,9 +34,21 @@ wifi:
 api:
   encryption:
     key: !secret api_encryption_key
+  # Required for stream_deck: keys: - it uses the API's HA entity
+  # state/service-call plumbing directly (see esphome/components/api/
+  # custom_api_device.h) rather than the sensor/switch platform wrappers.
+  homeassistant_states: true
+  homeassistant_services: true
 
 ota:
   platform: esphome
+
+# Any regular text font works here - only used to draw the entity name
+# label under each key's icon.
+font:
+  - file: "gfonts://Roboto"
+    id: stream_deck_font
+    size: 14
 
 external_components:
   - source: github://thatguy-za/esp32-stream-deck@main
@@ -44,3 +56,12 @@ external_components:
 
 stream_deck:
   model: mini # one of: mini, original, original_v2 (alias: mk2)
+  font_id: stream_deck_font
+  keys:
+    - key_index: 0
+      entity_id: light.kitchen
+      # icon: lightbulb        # optional - inferred from the domain otherwise
+      # on_color: 0x00FF00     # optional overrides shown with their defaults
+      # off_color: 0x808080
+    - key_index: 1
+      entity_id: switch.fan

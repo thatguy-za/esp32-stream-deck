@@ -114,11 +114,19 @@ payload, different field order:
 | 6–7 | 2 | Page number, little-endian |
 | 8–1023 | 1016 | JPEG payload chunk |
 
-TBD — confirm on hardware: whether these 1024/8191-byte reports actually ride
-an **interrupt OUT** endpoint or a **control-transfer SET_REPORT** (the
-Python library's transport abstraction hides this) — this determines which
-ESP-IDF `usb_host_hid` call to use in the M2 image-writer, and is exactly
-what M1's descriptor dump is for.
+**Resolved for Mini/Mini Mk2**: image writes are sent via `hid_class_request_set_report()`
+(a control-transfer `SET_REPORT` on EP0), the same mechanism confirmed
+working for enumeration and used for reset/brightness below — deliberately
+chosen over the interrupt endpoint, since that endpoint failed to claim on
+a real Mini Mk2 unit tested (512-byte MPS exceeding the ESP32-S3's USB Host
+FIFO limit — see the hardware note in `esphome/components/stream_deck/`'s
+git history). Not yet confirmed whether the *image actually renders
+correctly* on hardware (the flip/rotation transform in
+`stream_deck_canvas.cpp`'s `encode_bmp()` is a best-effort implementation of
+"flip vertical then rotate 90°" — direction unverified).
+
+Original/Original V2/MK.2 image writes are still genuinely untested — no
+JPEG encoder exists in this project yet, so nothing sends them.
 
 ## Feature reports (host → device, control transfer SET_REPORT)
 
@@ -142,11 +150,18 @@ what M1's descriptor dump is for.
 | Byte 1 | `0x02` | `0x08` |
 | Byte 2 | — | Brightness percent, `0`–`100` |
 
-## Open questions for M1
+## Open questions
 
-1. Real endpoint layout of the physical unit(s) tested (interrupt IN/OUT vs.
-   control-only) — dump full device/config/interface/endpoint descriptors on
-   enumeration.
-2. Leading header byte(s) meaning in each family's key-press report.
-3. Exact PID of each physical unit tested, to confirm which profile row
-   above actually applies to it.
+1. ~~Real endpoint layout of the physical unit(s) tested~~ — confirmed on a
+   real Mini Mk2 (PID `0x0090`): its single HID interface's IN endpoint
+   declares a 512-byte Max Packet Size, which the ESP32-S3's USB Host
+   controller can't allocate (~408-byte ceiling regardless of FIFO bias
+   settings — Full-Speed-only hardware, confirmed via an
+   [espressif/esp-idf issue](https://github.com/espressif/esp-idf/issues/14941)
+   closed "won't do"). Key-press reports still work despite this (the
+   `hid_host_hid` driver's own claim failure is handled non-fatally); image
+   writes route around it entirely via control transfers (see above).
+2. Leading header byte(s) meaning in each family's key-press report — still
+   open for Original/Original V2/MK.2 (untested).
+3. Image flip/rotation direction for Mini's `encode_bmp()` — best-effort
+   guess, unverified on hardware (see above).

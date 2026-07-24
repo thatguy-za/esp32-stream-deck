@@ -12,8 +12,11 @@
 #include "stream_deck.h"
 
 #include <cstdio>
+#include <cstring>
 
 #include "esphome/core/log.h"
+
+#include "icons.h"
 
 namespace esphome {
 namespace stream_deck {
@@ -22,14 +25,17 @@ static const char *const TAG = "stream_deck";
 
 #define STREAMDECK_VID 0x0FD9
 
+// key_pixel_size is 0 for families that need JPEG (not implemented yet -
+// see docs/protocol.md and StreamDeckProfile's doc comment); only Mini/Mini
+// Mk2 (BMP) currently support image writes.
 static const StreamDeckProfile kStreamdeckProfiles[] = {
-    {0x0063, "Stream Deck Mini", StreamDeckModel::MODEL_MINI, 6, 1},
-    {0x0090, "Stream Deck Mini Mk2", StreamDeckModel::MODEL_MINI, 6, 1},
-    {0x0060, "Stream Deck Original", StreamDeckModel::MODEL_ORIGINAL, 15, 1},
-    {0x006D, "Stream Deck Original V2", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4},
-    {0x0080, "Stream Deck MK.2", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4},
-    {0x00A5, "Stream Deck MK.2 Scissor", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4},
-    {0x00B9, "Stream Deck MK.2 Module", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4},
+    {0x0063, "Stream Deck Mini", StreamDeckModel::MODEL_MINI, 6, 1, 80},
+    {0x0090, "Stream Deck Mini Mk2", StreamDeckModel::MODEL_MINI, 6, 1, 80},
+    {0x0060, "Stream Deck Original", StreamDeckModel::MODEL_ORIGINAL, 15, 1, 0},
+    {0x006D, "Stream Deck Original V2", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4, 0},
+    {0x0080, "Stream Deck MK.2", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4, 0},
+    {0x00A5, "Stream Deck MK.2 Scissor", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4, 0},
+    {0x00B9, "Stream Deck MK.2 Module", StreamDeckModel::MODEL_ORIGINAL_V2, 15, 4, 0},
 };
 #define STREAMDECK_PROFILE_COUNT (sizeof(kStreamdeckProfiles) / sizeof(kStreamdeckProfiles[0]))
 
@@ -104,14 +110,33 @@ void StreamDeckComponent::log_key_report_(const uint8_t *data, size_t length) {
 
   char keys[5 * 16 + 1] = {0};
   for (size_t i = 0; i < key_count && i < 16; i++) {
+    bool pressed = data[header_len + i] != 0;
     snprintf(&keys[i * 5], 5, "%3u ", (unsigned) data[header_len + i]);
+
+    if (i < this->last_key_states_.size()) {
+      if (pressed && !this->last_key_states_[i]) {
+        this->handle_key_press_(static_cast<uint8_t>(i));
+      }
+      this->last_key_states_[i] = pressed;
+    }
   }
   ESP_LOGI(TAG, "%s key states: [ %s]", profile->name, keys);
+}
+
+void StreamDeckComponent::handle_key_press_(uint8_t key_index) {
+  for (auto *key : this->keys_) {
+    if (key->get_key_index() == key_index) {
+      ESP_LOGI(TAG, "Key %d pressed - toggling %s", key_index, key->get_entity_id().c_str());
+      key->toggle_entity();
+      return;
+    }
+  }
 }
 
 // Handles reports/events for an already-open HID interface.
 void StreamDeckComponent::hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
                                                         hid_host_interface_event_t event, void *arg) {
+  auto *self = static_cast<StreamDeckComponent *>(arg);
   uint8_t data[64] = {0};
   size_t data_length = 0;
   hid_host_dev_params_t dev_params;
@@ -121,12 +146,17 @@ void StreamDeckComponent::hid_host_interface_callback(hid_host_device_handle_t h
     case HID_HOST_INTERFACE_EVENT_INPUT_REPORT:
       ESP_ERROR_CHECK(
           hid_host_device_get_raw_input_report_data(hid_device_handle, data, sizeof(data), &data_length));
-      log_key_report_(data, data_length);
+      if (self != nullptr) {
+        self->log_key_report_(data, data_length);
+      }
       break;
 
     case HID_HOST_INTERFACE_EVENT_DISCONNECTED:
       ESP_LOGI(TAG, "Stream Deck disconnected (iface %d)", dev_params.iface_num);
       g_active_profile = nullptr;
+      if (self != nullptr) {
+        self->active_device_handle_ = nullptr;
+      }
       ESP_ERROR_CHECK(hid_host_device_close(hid_device_handle));
       break;
 
@@ -172,6 +202,20 @@ void StreamDeckComponent::handle_device_event_(hid_host_device_handle_t hid_devi
                model_to_string_(this->configured_model_));
     }
     g_active_profile = profile;
+    this->last_key_states_.assign(profile->key_count, false);
+
+    if (profile->key_pixel_size > 0) {
+      this->canvas_.init(profile->key_pixel_size, profile->key_pixel_size);
+      // Render every configured key now that we know the canvas is ready -
+      // keys may already have received their initial HA state before the
+      // device was connected.
+      for (auto *key : this->keys_) {
+        this->render_and_send_key_(key);
+      }
+    } else {
+      ESP_LOGW(TAG, "  -> this family needs a JPEG encoder this project doesn't have yet - "
+                    "key icons won't be drawn (see docs/protocol.md)");
+    }
   } else {
     ESP_LOGW(TAG,
              "  -> VID/PID 0x%04X/0x%04X doesn't match any known Stream Deck profile - "
@@ -188,7 +232,7 @@ void StreamDeckComponent::handle_device_event_(hid_host_device_handle_t hid_devi
 
   const hid_host_device_config_t dev_config = {
       .callback = hid_host_interface_callback,
-      .callback_arg = nullptr,
+      .callback_arg = this,
   };
   esp_err_t err = hid_host_device_open(hid_device_handle, &dev_config);
   if (err != ESP_OK) {
@@ -198,6 +242,8 @@ void StreamDeckComponent::handle_device_event_(hid_host_device_handle_t hid_devi
     // incompatible endpoint into another boot loop.
     ESP_LOGE(TAG, "hid_host_device_open failed: %s - key presses unavailable for this device", esp_err_to_name(err));
     g_active_profile = nullptr;
+  } else {
+    this->active_device_handle_ = hid_device_handle;
   }
 }
 
@@ -232,6 +278,12 @@ constexpr uint32_t USB_HOST_START_DELAY_MS = 8000;
 void StreamDeckComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up Stream Deck USB host...");
   this->event_queue_ = xQueueCreate(10, sizeof(AppEvent));
+
+  // HA entity subscriptions don't depend on USB at all - do these now
+  // rather than waiting for the USB host delay below.
+  for (auto *key : this->keys_) {
+    key->subscribe();
+  }
 
   ESP_LOGW(TAG,
            "Starting USB Host mode in %u seconds - if this board is still plugged into a "
@@ -291,6 +343,77 @@ void StreamDeckComponent::start_usb_host_() {
 void StreamDeckComponent::diag_client_event_callback(const usb_host_client_event_msg_t *event_msg, void *arg) {
   // Everything this client does is driven synchronously from
   // dump_full_descriptor_() instead of reacting to events here.
+}
+
+void StreamDeckComponent::add_key(StreamDeckKey *key) {
+  key->set_parent(this);
+  this->keys_.push_back(key);
+}
+
+void StreamDeckComponent::render_and_send_key_(StreamDeckKey *key) {
+  const StreamDeckProfile *profile = g_active_profile;
+  if (profile == nullptr || profile->key_pixel_size == 0) {
+    return;  // no device connected, or this family can't take image writes yet
+  }
+  if (this->font_ == nullptr) {
+    ESP_LOGW(TAG, "No font configured (stream_deck: font_id:) - cannot render key %d", key->get_key_index());
+    return;
+  }
+
+  int size = profile->key_pixel_size;
+  Color color = key->get_color();
+
+  this->canvas_.fill(Color(0, 0, 0));
+  int icon_size = size * 2 / 3;
+  draw_icon(this->canvas_, key->get_icon(), size / 2, size * 2 / 5, icon_size, color);
+  this->canvas_.print(size / 2, size - size / 6, this->font_, color, display::TextAlign::CENTER,
+                       key->get_friendly_name().c_str());
+
+  std::vector<uint8_t> bmp = this->canvas_.encode_bmp();
+  this->write_key_image_(key->get_key_index(), bmp.data(), bmp.size());
+}
+
+void StreamDeckComponent::write_key_image_(uint8_t key_index, const uint8_t *bmp, size_t len) {
+  if (this->active_device_handle_ == nullptr) {
+    ESP_LOGW(TAG, "No Stream Deck connected - cannot write image for key %d", key_index);
+    return;
+  }
+
+  // 1024-byte reports, 16-byte header, sent over a SET_REPORT control
+  // transfer (EP0) - see docs/protocol.md's Mini image-write format. Uses
+  // EP0 rather than the interrupt endpoint used for key-press reports, so
+  // this doesn't depend on that endpoint's claim having succeeded.
+  constexpr size_t kReportLen = 1024;
+  constexpr size_t kHeaderLen = 16;
+  constexpr size_t kPayloadLen = kReportLen - kHeaderLen;
+
+  uint8_t report[kReportLen];
+  size_t offset = 0;
+  uint8_t page = 0;
+  do {
+    memset(report, 0, sizeof(report));
+    size_t remaining = len - offset;
+    size_t chunk = remaining > kPayloadLen ? kPayloadLen : remaining;
+    bool is_last = (offset + chunk) >= len;
+
+    report[0] = 0x02;  // report id
+    report[1] = 0x01;  // command
+    report[2] = page;
+    report[3] = 0x00;
+    report[4] = is_last ? 0x01 : 0x00;
+    report[5] = static_cast<uint8_t>(key_index + 1);
+    memcpy(&report[kHeaderLen], bmp + offset, chunk);
+
+    esp_err_t err =
+        hid_class_request_set_report(this->active_device_handle_, HID_REPORT_TYPE_FEATURE, 0x02, report, kReportLen);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "Image write failed for key %d, page %d: %s", key_index, page, esp_err_to_name(err));
+      return;
+    }
+
+    offset += chunk;
+    page++;
+  } while (offset < len);
 }
 
 void StreamDeckComponent::dump_full_descriptor_(uint8_t dev_addr) {
